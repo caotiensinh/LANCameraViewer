@@ -68,6 +68,9 @@ class CameraTile(QFrame):
         super().resizeEvent(event)
         self.overlay.setGeometry(0, 0, self.width(), 34)
         self.status_dot.move(max(6, self.width() - 18), 13)
+        player = getattr(self, "player", None)
+        if player is not None:
+            player.update_video_geometry()
         self.overlay.raise_()
         self.status_dot.raise_()
 
