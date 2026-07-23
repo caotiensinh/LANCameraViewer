@@ -22,6 +22,7 @@ def test_invalid_settings_are_normalized():
     assert settings.network_caching_ms == 100
     assert settings.rtsp_transport == "tcp"
     assert settings.reconnect_interval_seconds == 2
+    assert settings.stretch_video_to_tile is True
 
 
 def test_app_config_roundtrip():
@@ -39,3 +40,8 @@ def test_app_config_roundtrip():
     }
     config = AppConfig.from_dict(raw)
     assert config.to_dict()["cameras"][0]["name"] == "Front"
+
+
+def test_video_stretch_can_be_disabled():
+    settings = ViewerSettings.from_dict({"stretch_video_to_tile": False})
+    assert settings.stretch_video_to_tile is False
