@@ -2,7 +2,8 @@
 param(
     [string]$InstallDir = "$env:LOCALAPPDATA\Programs\LANCameraViewer",
     [switch]$NoLaunch,
-    [switch]$NoDesktopShortcut
+    [switch]$NoDesktopShortcut,
+    [switch]$ResetCameraConfig
 )
 
 $ErrorActionPreference = "Stop"
@@ -49,10 +50,11 @@ function Find-Python312 {
 
 function Find-VlcDirectory {
     $candidates = @(
+        $env:VLC_HOME,
         $(if ($env:ProgramFiles) { "$env:ProgramFiles\VideoLAN\VLC" }),
         $(if (${env:ProgramFiles(x86)}) { "${env:ProgramFiles(x86)}\VideoLAN\VLC" }),
         $(if ($env:LOCALAPPDATA) { "$env:LOCALAPPDATA\Programs\VideoLAN\VLC" })
-    ) | Where-Object { $_ }
+    ) | Where-Object { $_ } | Select-Object -Unique
 
     foreach ($candidate in $candidates) {
         if (Test-Path (Join-Path $candidate "libvlc.dll")) { return $candidate }
@@ -71,6 +73,14 @@ function Install-WithWinget([string]$Id, [string]$DisplayName) {
         throw "winget could not install $DisplayName (exit code $LASTEXITCODE)."
     }
     Refresh-ProcessPath
+}
+
+function Backup-Config([string]$Path) {
+    if (-not (Test-Path $Path)) { return }
+    $stamp = Get-Date -Format "yyyyMMdd-HHmmss"
+    $backup = "$Path.$stamp.bak"
+    Copy-Item $Path $backup -Force
+    Write-Step "Existing camera configuration backed up to $backup"
 }
 
 Write-Step "Checking prerequisites..."
@@ -103,7 +113,7 @@ try {
 
     New-Item -ItemType Directory -Force $InstallDir | Out-Null
 
-    # Preserve user configuration, logs, and the virtual environment during updates.
+    # Preserve the virtual environment, user configuration, and logs during updates.
     Get-ChildItem $InstallDir -Force -ErrorAction SilentlyContinue |
         Where-Object { $_.Name -notin @(".venv", "config", "logs") } |
         Remove-Item -Recurse -Force
@@ -116,9 +126,33 @@ try {
     $configDir = Join-Path $InstallDir "config"
     New-Item -ItemType Directory -Force $configDir | Out-Null
     $installedConfig = Join-Path $configDir "cameras.json"
-    if (-not (Test-Path $installedConfig)) {
-        Copy-Item (Join-Path $sourceRoot.FullName "config\cameras.json") $installedConfig -Force
+    $sourceConfig = Join-Path $sourceRoot.FullName "config\cameras.json"
+    if (-not (Test-Path $sourceConfig)) {
+        throw "The downloaded source does not contain config\cameras.json."
     }
+
+    if ($ResetCameraConfig) {
+        Backup-Config $installedConfig
+        Copy-Item $sourceConfig $installedConfig -Force
+        Write-Step "Camera configuration reset to the repository defaults."
+    } elseif (-not (Test-Path $installedConfig)) {
+        Copy-Item $sourceConfig $installedConfig -Force
+        Write-Step "Installed the default camera configuration."
+    } else {
+        try {
+            $existingConfig = Get-Content $installedConfig -Raw -Encoding UTF8 | ConvertFrom-Json
+            $cameraCount = @($existingConfig.cameras).Count
+            Write-Step "Preserving existing camera configuration ($cameraCount camera(s))."
+            if ($cameraCount -eq 0) {
+                Write-Warning "The preserved configuration contains zero cameras. Run the reset command shown after installation if this was not intentional."
+            }
+        } catch {
+            Backup-Config $installedConfig
+            Copy-Item $sourceConfig $installedConfig -Force
+            Write-Warning "The existing camera configuration was invalid JSON and was replaced with the repository defaults."
+        }
+    }
+
     New-Item -ItemType Directory -Force (Join-Path $InstallDir "logs") | Out-Null
 
     $venvPython = Join-Path $InstallDir ".venv\Scripts\python.exe"
@@ -131,6 +165,7 @@ try {
 
     Write-Step "Installing Python dependencies..."
     & $venvPython -m pip install --disable-pip-version-check --upgrade pip
+    if ($LASTEXITCODE -ne 0) { throw "pip upgrade failed." }
     & $venvPython -m pip install --disable-pip-version-check --upgrade -r (Join-Path $InstallDir "requirements.txt")
     if ($LASTEXITCODE -ne 0) { throw "Python dependency installation failed." }
 
@@ -161,13 +196,35 @@ try {
     }
 
     $updateCommand = "powershell.exe -NoProfile -ExecutionPolicy Bypass -Command `"irm https://raw.githubusercontent.com/$RepoOwner/$RepoName/$Branch/install.ps1 | iex`""
+    $resetCommand = "powershell.exe -NoProfile -ExecutionPolicy Bypass -Command `"`$s=[scriptblock]::Create((irm https://raw.githubusercontent.com/$RepoOwner/$RepoName/$Branch/install.ps1)); & `$s -ResetCameraConfig`""
+    $diagnoseCommand = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$InstallDir\diagnose.ps1`""
+
     Set-Content -Path (Join-Path $startMenuDir "Update LAN Camera Viewer.cmd") -Value "@echo off`r`n$updateCommand`r`npause`r`n" -Encoding ASCII
+    Set-Content -Path (Join-Path $startMenuDir "Diagnose LAN Camera Viewer.cmd") -Value "@echo off`r`n$diagnoseCommand`r`n" -Encoding ASCII
+    Set-Content -Path (Join-Path $startMenuDir "Reset Camera Configuration.cmd") -Value "@echo off`r`n$resetCommand`r`npause`r`n" -Encoding ASCII
     Set-Content -Path (Join-Path $InstallDir "run.cmd") -Value "@echo off`r`nset `"VLC_HOME=$vlcDir`"`r`nstart `"`" `"$pythonw`" `"$appPath`"`r`n" -Encoding ASCII
+    Set-Content -Path (Join-Path $InstallDir "run-debug.cmd") -Value "@echo off`r`nset `"VLC_HOME=$vlcDir`"`r`ncd /d `"$InstallDir`"`r`n`"$venvPython`" `"$appPath`"`r`npause`r`n" -Encoding ASCII
+
+    $installedCameraCount = 0
+    try {
+        $installedCameraCount = @((Get-Content $installedConfig -Raw -Encoding UTF8 | ConvertFrom-Json).cameras).Count
+    } catch { }
 
     Write-Host ""
     Write-Host "LAN Camera Viewer installed successfully." -ForegroundColor Green
     Write-Host "Location: $InstallDir"
     Write-Host "Camera config: $installedConfig"
+    Write-Host "Configured cameras: $installedCameraCount"
+    Write-Host "Diagnostics: Start Menu > LAN Camera Viewer > Diagnose LAN Camera Viewer"
+    Write-Host ""
+    Write-Host "Important: this installer does not copy private camera credentials or custom RTSP paths from another PC." -ForegroundColor Yellow
+    Write-Host "Both PCs must have equivalent cameras.json settings and network access to the camera subnet." -ForegroundColor Yellow
+
+    if ($installedCameraCount -eq 0) {
+        Write-Host ""
+        Write-Host "To restore the four repository sample cameras, run:" -ForegroundColor Yellow
+        Write-Host "powershell -NoProfile -ExecutionPolicy Bypass -Command `"`$s=[scriptblock]::Create((irm https://raw.githubusercontent.com/$RepoOwner/$RepoName/$Branch/install.ps1)); & `$s -ResetCameraConfig`""
+    }
 
     if (-not $NoLaunch) {
         Write-Step "Starting LAN Camera Viewer..."
