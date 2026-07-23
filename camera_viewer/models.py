@@ -53,6 +53,7 @@ class ViewerSettings:
     reconnect_interval_seconds: int = 5
     overlay_hide_ms: int = 2200
     keep_hidden_streams_alive: bool = False
+    stretch_video_to_tile: bool = True
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> "ViewerSettings":
@@ -74,6 +75,7 @@ class ViewerSettings:
             ),
             overlay_hide_ms=max(500, min(int(raw.get("overlay_hide_ms", 2200)), 10000)),
             keep_hidden_streams_alive=bool(raw.get("keep_hidden_streams_alive", False)),
+            stretch_video_to_tile=bool(raw.get("stretch_video_to_tile", True)),
         )
 
     def to_dict(self) -> dict[str, Any]:
