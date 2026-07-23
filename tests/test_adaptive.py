@@ -154,6 +154,25 @@ def test_transient_rebuffer_does_not_restart_cache_profile():
     assert decision.cache_ms_by_camera["camera-01"] >= 240
 
 
+def test_vbr_bitrate_changes_alone_are_not_treated_as_jitter():
+    controller = AdaptiveRealtimeController(
+        min_switch_seconds=0,
+        bad_samples_before_switch=2,
+        recovery_samples=2,
+    )
+
+    for bitrate in (0.4, 4.0, 0.5, 5.0, 0.6):
+        controller.update_camera(camera_sample(input_mbps=bitrate, displayed_fps=20.0))
+        decision = controller.evaluate(
+            system=system_sample(),
+            visible_camera_ids={"camera-01"},
+            base_cache_ms=250,
+        )
+
+    assert decision.level == "healthy"
+    assert "camera-01" not in decision.force_substream_ids
+
+
 def test_missing_substream_is_reported_in_warning():
     controller = AdaptiveRealtimeController(
         min_switch_seconds=0,
