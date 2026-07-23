@@ -21,14 +21,22 @@ class CameraConfig:
     name: str
     rtsp_url: str
     enabled: bool = True
+    grid_rtsp_url: str = ""
 
     @classmethod
-    def create(cls, name: str, rtsp_url: str, enabled: bool = True) -> "CameraConfig":
+    def create(
+        cls,
+        name: str,
+        rtsp_url: str,
+        enabled: bool = True,
+        grid_rtsp_url: str = "",
+    ) -> "CameraConfig":
         return cls(
             id=f"camera-{uuid4().hex[:10]}",
             name=name.strip(),
             rtsp_url=rtsp_url.strip(),
             enabled=enabled,
+            grid_rtsp_url=grid_rtsp_url.strip(),
         )
 
     @classmethod
@@ -38,7 +46,13 @@ class CameraConfig:
             name=str(raw.get("name") or "Camera").strip(),
             rtsp_url=str(raw.get("rtsp_url") or "").strip(),
             enabled=bool(raw.get("enabled", True)),
+            grid_rtsp_url=str(raw.get("grid_rtsp_url") or "").strip(),
         )
+
+    def stream_url(self, use_grid_stream: bool) -> str:
+        if use_grid_stream and self.grid_rtsp_url:
+            return self.grid_rtsp_url
+        return self.rtsp_url
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -54,6 +68,7 @@ class ViewerSettings:
     overlay_hide_ms: int = 2200
     keep_hidden_streams_alive: bool = False
     stretch_video_to_tile: bool = True
+    use_grid_substream: bool = True
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> "ViewerSettings":
@@ -76,6 +91,7 @@ class ViewerSettings:
             overlay_hide_ms=max(500, min(int(raw.get("overlay_hide_ms", 2200)), 10000)),
             keep_hidden_streams_alive=bool(raw.get("keep_hidden_streams_alive", False)),
             stretch_video_to_tile=bool(raw.get("stretch_video_to_tile", True)),
+            use_grid_substream=bool(raw.get("use_grid_substream", True)),
         )
 
     def to_dict(self) -> dict[str, Any]:
