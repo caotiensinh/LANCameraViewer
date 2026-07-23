@@ -117,7 +117,7 @@ The report is saved under:
 To reset the local configuration to the four public repository sample cameras:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$s=[scriptblock]::Create((irm https://raw.githubusercontent.com/caotiensinh/LANCameraViewer/main/install.ps1)); & $s -ResetCameraConfig"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/caotiensinh/LANCameraViewer/main/reset_config.ps1 | iex"
 ```
 
 This backs up the existing configuration first. The public sample URLs do not include camera usernames or passwords.
