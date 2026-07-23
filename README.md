@@ -35,7 +35,8 @@ The installer:
 4. Creates an isolated Python virtual environment.
 5. Creates Start Menu and Desktop shortcuts.
 6. Preserves camera configuration when run again as an update.
-7. Starts the application.
+7. Creates diagnostic and configuration-reset commands in the Start Menu.
+8. Starts the application.
 
 Windows 10/11 with Microsoft **App Installer** (`winget`) is required for fully automatic prerequisite installation.
 
@@ -71,6 +72,55 @@ Default camera configuration is stored in:
 ```text
 config/cameras.json
 ```
+
+## Installing on a second PC
+
+The one-command installer downloads the application, but it does **not** copy private camera settings from another computer. Credentials and custom RTSP paths stored on a laptop remain local to that laptop.
+
+The configuration path on every installed PC is:
+
+```text
+%LOCALAPPDATA%\Programs\LANCameraViewer\config\cameras.json
+```
+
+To reproduce the same setup on another PC:
+
+1. Close the application on both PCs.
+2. Copy `cameras.json` from the working PC.
+3. Replace the same file on the new PC.
+4. Start LAN Camera Viewer again.
+
+Both PCs must also have network access to the camera subnet. For the repository sample addresses, the PC must be on `192.168.11.0/24` or have a valid route to that subnet.
+
+## Diagnostics
+
+After updating to version `0.1.4`, use:
+
+```text
+Start Menu > LAN Camera Viewer > Diagnose LAN Camera Viewer
+```
+
+The diagnostic command checks:
+
+- the local IPv4 addresses and routes;
+- whether `cameras.json` exists and how many cameras it contains;
+- whether every configured RTSP host and port is reachable;
+- whether VLC, `libvlc.dll`, Python, PySide6, and python-vlc load correctly;
+- the latest application log entries.
+
+The report is saved under:
+
+```text
+%LOCALAPPDATA%\Programs\LANCameraViewer\logs\diagnostics-*.txt
+```
+
+To reset the local configuration to the four public repository sample cameras:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$s=[scriptblock]::Create((irm https://raw.githubusercontent.com/caotiensinh/LANCameraViewer/main/install.ps1)); & $s -ResetCameraConfig"
+```
+
+This backs up the existing configuration first. The public sample URLs do not include camera usernames or passwords.
 
 ## Independent camera pipelines
 
