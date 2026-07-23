@@ -16,6 +16,7 @@ def test_invalid_settings_are_normalized():
             "network_caching_ms": 1,
             "rtsp_transport": "invalid",
             "reconnect_interval_seconds": 0,
+            "decoder_threads_per_camera": 99,
         }
     )
     assert settings.default_layout == "2x2"
@@ -24,6 +25,12 @@ def test_invalid_settings_are_normalized():
     assert settings.reconnect_interval_seconds == 2
     assert settings.stretch_video_to_tile is True
     assert settings.use_grid_substream is True
+    assert settings.decoder_threads_per_camera == 4
+
+
+def test_decoder_threads_default_to_one_per_camera():
+    settings = ViewerSettings.from_dict({})
+    assert settings.decoder_threads_per_camera == 1
 
 
 def test_camera_uses_grid_substream_when_configured():
@@ -49,7 +56,10 @@ def test_camera_falls_back_to_main_stream():
 def test_app_config_roundtrip():
     raw = {
         "version": 1,
-        "settings": {"default_layout": "1x2"},
+        "settings": {
+            "default_layout": "1x2",
+            "decoder_threads_per_camera": 2,
+        },
         "cameras": [
             {
                 "id": "camera-01",
@@ -64,6 +74,7 @@ def test_app_config_roundtrip():
     output = config.to_dict()
     assert output["cameras"][0]["name"] == "Front"
     assert output["cameras"][0]["grid_rtsp_url"].endswith("/stream2")
+    assert output["settings"]["decoder_threads_per_camera"] == 2
 
 
 def test_video_stretch_can_be_disabled():
