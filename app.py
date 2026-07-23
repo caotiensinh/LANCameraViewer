@@ -1,7 +1,7 @@
-from camera_viewer.realtime_frame_shedding import install_realtime_frame_shedding
+from camera_viewer.stable_vlc_runtime import install_stable_vlc_runtime
 
-# Install the realtime-first decoder policy before MainWindow creates players.
-install_realtime_frame_shedding()
+# Patch the VLC/player classes before MainWindow creates any camera pipeline.
+install_stable_vlc_runtime()
 
 from camera_viewer.application import run  # noqa: E402
 
