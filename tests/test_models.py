@@ -1,4 +1,4 @@
-from camera_viewer.models import AppConfig, LAYOUT_DIMENSIONS, ViewerSettings
+from camera_viewer.models import AppConfig, CameraConfig, LAYOUT_DIMENSIONS, ViewerSettings
 
 
 def test_layout_capacities():
@@ -23,6 +23,27 @@ def test_invalid_settings_are_normalized():
     assert settings.rtsp_transport == "tcp"
     assert settings.reconnect_interval_seconds == 2
     assert settings.stretch_video_to_tile is True
+    assert settings.use_grid_substream is True
+
+
+def test_camera_uses_grid_substream_when_configured():
+    camera = CameraConfig(
+        id="camera-01",
+        name="Front",
+        rtsp_url="rtsp://192.168.1.10/main",
+        grid_rtsp_url="rtsp://192.168.1.10/sub",
+    )
+    assert camera.stream_url(False) == "rtsp://192.168.1.10/main"
+    assert camera.stream_url(True) == "rtsp://192.168.1.10/sub"
+
+
+def test_camera_falls_back_to_main_stream():
+    camera = CameraConfig(
+        id="camera-01",
+        name="Front",
+        rtsp_url="rtsp://192.168.1.10/main",
+    )
+    assert camera.stream_url(True) == "rtsp://192.168.1.10/main"
 
 
 def test_app_config_roundtrip():
@@ -34,12 +55,15 @@ def test_app_config_roundtrip():
                 "id": "camera-01",
                 "name": "Front",
                 "rtsp_url": "rtsp://192.168.1.10/stream1",
+                "grid_rtsp_url": "rtsp://192.168.1.10/stream2",
                 "enabled": True,
             }
         ],
     }
     config = AppConfig.from_dict(raw)
-    assert config.to_dict()["cameras"][0]["name"] == "Front"
+    output = config.to_dict()
+    assert output["cameras"][0]["name"] == "Front"
+    assert output["cameras"][0]["grid_rtsp_url"].endswith("/stream2")
 
 
 def test_video_stretch_can_be_disabled():
