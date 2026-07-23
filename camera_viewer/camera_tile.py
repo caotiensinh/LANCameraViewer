@@ -105,6 +105,9 @@ class CameraTile(QFrame):
             return
         super().mouseDoubleClickEvent(event)
 
+    def set_grid_stream(self, use_grid_stream: bool) -> None:
+        self.player.set_grid_stream(use_grid_stream)
+
     def set_stream_active(self, active: bool) -> None:
         self.player.set_active(active)
 
