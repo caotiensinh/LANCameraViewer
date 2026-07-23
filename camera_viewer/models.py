@@ -71,6 +71,17 @@ class ViewerSettings:
     use_grid_substream: bool = True
     decoder_threads_per_camera: int = 1
 
+    adaptive_realtime: bool = True
+    adaptive_sample_interval_ms: int = 1500
+    adaptive_cpu_high_percent: int = 78
+    adaptive_cpu_critical_percent: int = 92
+    adaptive_memory_high_percent: int = 86
+    adaptive_min_switch_seconds: int = 12
+    adaptive_recovery_samples: int = 8
+    adaptive_bad_samples_before_switch: int = 3
+    adaptive_cache_min_ms: int = 100
+    adaptive_cache_max_ms: int = 350
+
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> "ViewerSettings":
         layout = str(raw.get("default_layout", "2x2"))
@@ -80,6 +91,12 @@ class ViewerSettings:
         transport = str(raw.get("rtsp_transport", "tcp")).lower()
         if transport not in {"tcp", "udp"}:
             transport = "tcp"
+
+        cache_min = max(80, min(int(raw.get("adaptive_cache_min_ms", 100)), 500))
+        cache_max = max(
+            cache_min,
+            min(int(raw.get("adaptive_cache_max_ms", 350)), 1500),
+        )
 
         return cls(
             default_layout=layout,
@@ -96,6 +113,30 @@ class ViewerSettings:
             decoder_threads_per_camera=max(
                 1, min(int(raw.get("decoder_threads_per_camera", 1)), 4)
             ),
+            adaptive_realtime=bool(raw.get("adaptive_realtime", True)),
+            adaptive_sample_interval_ms=max(
+                750, min(int(raw.get("adaptive_sample_interval_ms", 1500)), 5000)
+            ),
+            adaptive_cpu_high_percent=max(
+                50, min(int(raw.get("adaptive_cpu_high_percent", 78)), 95)
+            ),
+            adaptive_cpu_critical_percent=max(
+                60, min(int(raw.get("adaptive_cpu_critical_percent", 92)), 100)
+            ),
+            adaptive_memory_high_percent=max(
+                60, min(int(raw.get("adaptive_memory_high_percent", 86)), 98)
+            ),
+            adaptive_min_switch_seconds=max(
+                5, min(int(raw.get("adaptive_min_switch_seconds", 12)), 120)
+            ),
+            adaptive_recovery_samples=max(
+                3, min(int(raw.get("adaptive_recovery_samples", 8)), 60)
+            ),
+            adaptive_bad_samples_before_switch=max(
+                2, min(int(raw.get("adaptive_bad_samples_before_switch", 3)), 20)
+            ),
+            adaptive_cache_min_ms=cache_min,
+            adaptive_cache_max_ms=cache_max,
         )
 
     def to_dict(self) -> dict[str, Any]:
