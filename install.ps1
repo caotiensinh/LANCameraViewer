@@ -196,8 +196,8 @@ try {
     }
 
     $updateCommand = "powershell.exe -NoProfile -ExecutionPolicy Bypass -Command `"irm https://raw.githubusercontent.com/$RepoOwner/$RepoName/$Branch/install.ps1 | iex`""
-    $resetCommand = "powershell.exe -NoProfile -ExecutionPolicy Bypass -Command `"`$s=[scriptblock]::Create((irm https://raw.githubusercontent.com/$RepoOwner/$RepoName/$Branch/install.ps1)); & `$s -ResetCameraConfig`""
     $diagnoseCommand = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$InstallDir\diagnose.ps1`""
+    $resetCommand = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$InstallDir\reset_config.ps1`""
 
     Set-Content -Path (Join-Path $startMenuDir "Update LAN Camera Viewer.cmd") -Value "@echo off`r`n$updateCommand`r`npause`r`n" -Encoding ASCII
     Set-Content -Path (Join-Path $startMenuDir "Diagnose LAN Camera Viewer.cmd") -Value "@echo off`r`n$diagnoseCommand`r`n" -Encoding ASCII
@@ -223,7 +223,7 @@ try {
     if ($installedCameraCount -eq 0) {
         Write-Host ""
         Write-Host "To restore the four repository sample cameras, run:" -ForegroundColor Yellow
-        Write-Host "powershell -NoProfile -ExecutionPolicy Bypass -Command `"`$s=[scriptblock]::Create((irm https://raw.githubusercontent.com/$RepoOwner/$RepoName/$Branch/install.ps1)); & `$s -ResetCameraConfig`""
+        Write-Host "powershell -NoProfile -ExecutionPolicy Bypass -Command `"irm https://raw.githubusercontent.com/$RepoOwner/$RepoName/$Branch/reset_config.ps1 | iex`""
     }
 
     if (-not $NoLaunch) {
