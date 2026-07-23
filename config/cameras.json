@@ -1,0 +1,38 @@
+{
+  "version": 1,
+  "settings": {
+    "default_layout": "2x2",
+    "network_caching_ms": 250,
+    "rtsp_transport": "tcp",
+    "auto_reconnect": true,
+    "reconnect_interval_seconds": 5,
+    "overlay_hide_ms": 2200,
+    "keep_hidden_streams_alive": false
+  },
+  "cameras": [
+    {
+      "id": "camera-01",
+      "name": "Camera 01",
+      "rtsp_url": "rtsp://192.168.11.124:554/stream1",
+      "enabled": true
+    },
+    {
+      "id": "camera-02",
+      "name": "Camera 02",
+      "rtsp_url": "rtsp://192.168.11.125:554/stream1",
+      "enabled": true
+    },
+    {
+      "id": "camera-03",
+      "name": "Camera 03",
+      "rtsp_url": "rtsp://192.168.11.126:554/stream1",
+      "enabled": true
+    },
+    {
+      "id": "camera-04",
+      "name": "Camera 04",
+      "rtsp_url": "rtsp://192.168.11.127:554/stream1",
+      "enabled": true
+    }
+  ]
+}
