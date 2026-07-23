@@ -59,9 +59,11 @@ class MainWindow(QMainWindow):
         self.header = self._build_header()
         self.grid_host = QWidget(self.central)
         self.grid_layout = QGridLayout(self.grid_host)
-        self.grid_layout.setContentsMargins(2, 2, 2, 2)
-        self.grid_layout.setHorizontalSpacing(2)
-        self.grid_layout.setVerticalSpacing(2)
+        # The video wall must touch the application edges. Individual tiles
+        # provide their own overlays, so the grid itself needs no padding.
+        self.grid_layout.setContentsMargins(0, 0, 0, 0)
+        self.grid_layout.setHorizontalSpacing(0)
+        self.grid_layout.setVerticalSpacing(0)
 
         self.root_layout.addWidget(self.header)
         self.root_layout.addWidget(self.grid_host, 1)
@@ -180,6 +182,23 @@ class MainWindow(QMainWindow):
         order = {camera.id: index for index, camera in enumerate(self.config.cameras)}
         return sorted(self.tiles.values(), key=lambda tile: order.get(tile.camera.id, 9999))
 
+    def _reset_grid_tracks(self) -> None:
+        """Remove row/column sizing left behind by a larger layout.
+
+        QGridLayout keeps stretch factors even after widgets are removed. Without
+        resetting them, switching from 4x4 to 1x1 leaves sixteen equally sized
+        logical cells and the single camera remains stuck in the top-left cell.
+        """
+        max_rows = max(rows for rows, _columns in LAYOUT_DIMENSIONS.values())
+        max_columns = max(columns for _rows, columns in LAYOUT_DIMENSIONS.values())
+
+        for row in range(max_rows):
+            self.grid_layout.setRowStretch(row, 0)
+            self.grid_layout.setRowMinimumHeight(row, 0)
+        for column in range(max_columns):
+            self.grid_layout.setColumnStretch(column, 0)
+            self.grid_layout.setColumnMinimumWidth(column, 0)
+
     def _apply_layout(self, layout_name: str) -> None:
         if layout_name not in LAYOUT_DIMENSIONS:
             return
@@ -190,6 +209,7 @@ class MainWindow(QMainWindow):
         capacity = rows * columns
 
         self._clear_grid()
+        self._reset_grid_tracks()
         ordered = self._ordered_tiles()
 
         if layout_name == "1x1" and ordered:
@@ -224,6 +244,12 @@ class MainWindow(QMainWindow):
             self.grid_layout.setRowStretch(row, 1)
         for column in range(columns):
             self.grid_layout.setColumnStretch(column, 1)
+
+        # Force Qt to discard the previous geometry immediately. This makes
+        # 1x1 fill the complete video area, 1x2 split it in half, and 2x2 use
+        # four equal quadrants even after visiting 3x3 or 4x4.
+        self.grid_layout.invalidate()
+        self.grid_host.updateGeometry()
 
     def _select_camera(self, camera_id: str) -> None:
         self.selected_camera_id = camera_id
