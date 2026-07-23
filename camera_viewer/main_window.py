@@ -20,7 +20,7 @@ from PySide6.QtWidgets import (
 from .camera_dialog import CameraSettingsDialog
 from .camera_tile import CameraTile, EmptyTile
 from .config_service import ConfigError, ConfigService
-from .models import AppConfig, LAYOUT_DIMENSIONS, VALID_LAYOUTS
+from .models import LAYOUT_DIMENSIONS, VALID_LAYOUTS
 from .player import VlcEngine
 
 LOGGER = logging.getLogger(__name__)
@@ -59,8 +59,6 @@ class MainWindow(QMainWindow):
         self.header = self._build_header()
         self.grid_host = QWidget(self.central)
         self.grid_layout = QGridLayout(self.grid_host)
-        # The video wall must touch the application edges. Individual tiles
-        # provide their own overlays, so the grid itself needs no padding.
         self.grid_layout.setContentsMargins(0, 0, 0, 0)
         self.grid_layout.setHorizontalSpacing(0)
         self.grid_layout.setVerticalSpacing(0)
@@ -183,12 +181,6 @@ class MainWindow(QMainWindow):
         return sorted(self.tiles.values(), key=lambda tile: order.get(tile.camera.id, 9999))
 
     def _reset_grid_tracks(self) -> None:
-        """Remove row/column sizing left behind by a larger layout.
-
-        QGridLayout keeps stretch factors even after widgets are removed. Without
-        resetting them, switching from 4x4 to 1x1 leaves sixteen equally sized
-        logical cells and the single camera remains stuck in the top-left cell.
-        """
         max_rows = max(rows for rows, _columns in LAYOUT_DIMENSIONS.values())
         max_columns = max(columns for _rows, columns in LAYOUT_DIMENSIONS.values())
 
@@ -218,6 +210,12 @@ class MainWindow(QMainWindow):
         else:
             visible_tiles = ordered[:capacity]
 
+        # One camera uses the main stream. Multi-camera layouts use the optional
+        # low-resolution grid/substream to keep weak PCs smooth.
+        use_grid_stream = layout_name != "1x1"
+        for tile in ordered:
+            tile.set_grid_stream(use_grid_stream)
+
         visible_ids = {tile.camera.id for tile in visible_tiles}
         for index in range(capacity):
             row, column = divmod(index, columns)
@@ -245,9 +243,6 @@ class MainWindow(QMainWindow):
         for column in range(columns):
             self.grid_layout.setColumnStretch(column, 1)
 
-        # Force Qt to discard the previous geometry immediately. This makes
-        # 1x1 fill the complete video area, 1x2 split it in half, and 2x2 use
-        # four equal quadrants even after visiting 3x3 or 4x4.
         self.grid_layout.invalidate()
         self.grid_host.updateGeometry()
 
@@ -276,6 +271,9 @@ class MainWindow(QMainWindow):
         self.header.hide()
         self._clear_grid()
         self._reset_grid_tracks()
+
+        # Fullscreen always uses the main stream for maximum detail.
+        tile.set_grid_stream(False)
         self.grid_layout.addWidget(tile, 0, 0)
         self.grid_layout.setRowStretch(0, 1)
         self.grid_layout.setColumnStretch(0, 1)
