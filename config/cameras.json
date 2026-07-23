@@ -10,7 +10,17 @@
     "keep_hidden_streams_alive": false,
     "stretch_video_to_tile": true,
     "use_grid_substream": true,
-    "decoder_threads_per_camera": 1
+    "decoder_threads_per_camera": 1,
+    "adaptive_realtime": true,
+    "adaptive_sample_interval_ms": 1500,
+    "adaptive_cpu_high_percent": 78,
+    "adaptive_cpu_critical_percent": 92,
+    "adaptive_memory_high_percent": 86,
+    "adaptive_min_switch_seconds": 12,
+    "adaptive_recovery_samples": 8,
+    "adaptive_bad_samples_before_switch": 3,
+    "adaptive_cache_min_ms": 100,
+    "adaptive_cache_max_ms": 350
   },
   "cameras": [
     {
