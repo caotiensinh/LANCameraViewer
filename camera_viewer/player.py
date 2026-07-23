@@ -168,10 +168,10 @@ class CameraPlayer(QObject):
         self._schedule_reconcile()
 
     def set_runtime_cache(self, cache_ms: int) -> None:
-        cache_ms = max(
-            self.settings.adaptive_cache_min_ms,
-            min(int(cache_ms), self.settings.adaptive_cache_max_ms),
-        )
+        # The adaptive controller already constrains its decisions. Keep the
+        # player-level limit broad so a user who disables adaptive mode can still
+        # use a larger manually configured buffer.
+        cache_ms = max(80, min(int(cache_ms), 3000))
         with self._command_lock:
             if self._runtime_cache_ms == cache_ms:
                 return
