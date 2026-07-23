@@ -36,10 +36,10 @@ QPushButton#IconButton {
 }
 QFrame#CameraTile {
     background-color: #050607;
-    border: 1px solid #24282c;
+    border: none;
 }
 QFrame#CameraTile[focused="true"] {
-    border: 1px solid #3a4046;
+    border: none;
 }
 QWidget#VideoSurface {
     background-color: #050607;
