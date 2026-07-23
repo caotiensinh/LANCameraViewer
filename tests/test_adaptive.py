@@ -38,6 +38,8 @@ def system_sample(
     memory: float = 30.0,
     rx_mbps: float = 10.0,
     nic_mbps: float = 1000.0,
+    logical_cpus: int = 8,
+    total_memory_gb: float = 16.0,
 ) -> SystemTelemetry:
     return SystemTelemetry(
         cpu_percent=cpu,
@@ -45,8 +47,8 @@ def system_sample(
         process_memory_mb=100.0,
         network_rx_mbps=rx_mbps,
         nic_speed_mbps=nic_mbps,
-        logical_cpus=8,
-        total_memory_gb=16.0,
+        logical_cpus=logical_cpus,
+        total_memory_gb=total_memory_gb,
     )
 
 
@@ -102,24 +104,54 @@ def test_camera_recovers_to_main_profile_after_stable_samples():
     assert decision.level == "healthy"
 
 
-def test_critical_cpu_forces_realtime_profile_and_low_cache():
+def test_critical_cpu_forces_realtime_profile_and_low_cache_immediately():
     controller = AdaptiveRealtimeController(
         min_switch_seconds=0,
-        bad_samples_before_switch=2,
+        bad_samples_before_switch=3,
         recovery_samples=2,
     )
 
-    for _ in range(2):
-        controller.update_camera(camera_sample())
-        decision = controller.evaluate(
-            system=system_sample(cpu=96.0),
-            visible_camera_ids={"camera-01"},
-            base_cache_ms=250,
-        )
+    controller.update_camera(camera_sample())
+    decision = controller.evaluate(
+        system=system_sample(
+            cpu=90.0,
+            logical_cpus=4,
+            total_memory_gb=8.0,
+        ),
+        visible_camera_ids={"camera-01"},
+        base_cache_ms=250,
+    )
 
     assert "camera-01" in decision.force_substream_ids
     assert decision.cache_ms_by_camera["camera-01"] <= 160
     assert decision.level == "critical"
+
+
+def test_transient_rebuffer_does_not_restart_cache_profile():
+    controller = AdaptiveRealtimeController(
+        min_switch_seconds=0,
+        bad_samples_before_switch=3,
+        recovery_samples=2,
+    )
+
+    controller.update_camera(camera_sample(buffering_events=1))
+    decision = controller.evaluate(
+        system=system_sample(),
+        visible_camera_ids={"camera-01"},
+        base_cache_ms=200,
+    )
+
+    assert decision.cache_ms_by_camera["camera-01"] == 200
+
+    for _ in range(2):
+        controller.update_camera(camera_sample(buffering_events=1))
+        decision = controller.evaluate(
+            system=system_sample(),
+            visible_camera_ids={"camera-01"},
+            base_cache_ms=200,
+        )
+
+    assert decision.cache_ms_by_camera["camera-01"] >= 240
 
 
 def test_missing_substream_is_reported_in_warning():
