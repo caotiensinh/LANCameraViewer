@@ -27,19 +27,30 @@ class CameraEditorDialog(QDialog):
     def __init__(self, camera: CameraConfig | None = None, parent: QWidget | None = None):
         super().__init__(parent)
         self.setWindowTitle("Camera")
-        self.setMinimumWidth(520)
+        self.setMinimumWidth(620)
         self._camera = camera
 
         self.name_edit = QLineEdit(camera.name if camera else "")
         self.url_edit = QLineEdit(camera.rtsp_url if camera else "rtsp://")
         self.url_edit.setPlaceholderText("rtsp://user:password@192.168.11.124:554/stream1")
+        self.grid_url_edit = QLineEdit(camera.grid_rtsp_url if camera else "")
+        self.grid_url_edit.setPlaceholderText(
+            "Optional low-resolution stream for grids, for example .../stream2"
+        )
         self.enabled_check = QCheckBox("Enabled")
         self.enabled_check.setChecked(camera.enabled if camera else True)
 
         form = QFormLayout()
         form.addRow("Name", self.name_edit)
-        form.addRow("RTSP URL", self.url_edit)
+        form.addRow("Main RTSP URL", self.url_edit)
+        form.addRow("Grid/substream URL", self.grid_url_edit)
         form.addRow("", self.enabled_check)
+
+        hint = QLabel(
+            "The main stream is used for 1x1 and fullscreen. The optional grid stream "
+            "is used for 1x2, 2x2, 3x3 and 4x4 to reduce CPU/GPU load."
+        )
+        hint.setWordWrap(True)
 
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel
@@ -49,6 +60,7 @@ class CameraEditorDialog(QDialog):
 
         layout = QVBoxLayout(self)
         layout.addLayout(form)
+        layout.addWidget(hint)
         layout.addWidget(buttons)
 
     def result_camera(self) -> CameraConfig:
@@ -58,38 +70,52 @@ class CameraEditorDialog(QDialog):
                 name=self.name_edit.text().strip(),
                 rtsp_url=self.url_edit.text().strip(),
                 enabled=self.enabled_check.isChecked(),
+                grid_rtsp_url=self.grid_url_edit.text().strip(),
             )
         return CameraConfig.create(
             name=self.name_edit.text().strip(),
             rtsp_url=self.url_edit.text().strip(),
             enabled=self.enabled_check.isChecked(),
+            grid_rtsp_url=self.grid_url_edit.text().strip(),
         )
 
     def _validate_and_accept(self) -> None:
         name = self.name_edit.text().strip()
-        url = self.url_edit.text().strip()
+        main_url = self.url_edit.text().strip()
+        grid_url = self.grid_url_edit.text().strip()
         if not name:
             QMessageBox.warning(self, "Invalid camera", "Camera name is required.")
             return
-        if not url.lower().startswith(("rtsp://", "rtsps://")):
+        if not self._is_rtsp_url(main_url):
             QMessageBox.warning(
                 self,
                 "Invalid RTSP URL",
-                "The URL must start with rtsp:// or rtsps://, not http://.",
+                "The main URL must start with rtsp:// or rtsps://, not http://.",
+            )
+            return
+        if grid_url and not self._is_rtsp_url(grid_url):
+            QMessageBox.warning(
+                self,
+                "Invalid grid RTSP URL",
+                "The grid URL must start with rtsp:// or rtsps://.",
             )
             return
         self.accept()
+
+    @staticmethod
+    def _is_rtsp_url(url: str) -> bool:
+        return url.lower().startswith(("rtsp://", "rtsps://"))
 
 
 class CameraSettingsDialog(QDialog):
     def __init__(self, cameras: list[CameraConfig], parent: QWidget | None = None):
         super().__init__(parent)
         self.setWindowTitle("Camera Settings")
-        self.resize(820, 440)
+        self.resize(980, 460)
         self.cameras = deepcopy(cameras)
 
-        self.table = QTableWidget(0, 3, self)
-        self.table.setHorizontalHeaderLabels(["Name", "RTSP URL", "Enabled"])
+        self.table = QTableWidget(0, 4, self)
+        self.table.setHorizontalHeaderLabels(["Name", "Main RTSP URL", "Grid stream", "Enabled"])
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
@@ -97,7 +123,8 @@ class CameraSettingsDialog(QDialog):
         header = self.table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
         self.table.doubleClicked.connect(self._edit_camera)
 
         add_button = QPushButton("Add")
@@ -113,7 +140,11 @@ class CameraSettingsDialog(QDialog):
         action_layout.addWidget(delete_button)
         action_layout.addStretch(1)
 
-        hint = QLabel("Camera IP addresses and passwords are stored in config/cameras.json.")
+        hint = QLabel(
+            "For a weak PC, configure each camera's low-resolution H.264 substream "
+            "as the Grid stream. Configuration is stored in config/cameras.json."
+        )
+        hint.setWordWrap(True)
         hint.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
 
         buttons = QDialogButtonBox(
@@ -139,14 +170,15 @@ class CameraSettingsDialog(QDialog):
         for row, camera in enumerate(self.cameras):
             self.table.setItem(row, 0, QTableWidgetItem(camera.name))
             self.table.setItem(row, 1, QTableWidgetItem(camera.rtsp_url))
-            self.table.setItem(row, 2, QTableWidgetItem("Yes" if camera.enabled else "No"))
+            self.table.setItem(row, 2, QTableWidgetItem(camera.grid_rtsp_url or "Same as main"))
+            self.table.setItem(row, 3, QTableWidgetItem("Yes" if camera.enabled else "No"))
 
     def _add_camera(self) -> None:
         editor = CameraEditorDialog(parent=self)
         if editor.exec() == QDialog.DialogCode.Accepted:
             camera = editor.result_camera()
             if self._url_exists(camera.rtsp_url):
-                QMessageBox.warning(self, "Duplicate camera", "This RTSP URL already exists.")
+                QMessageBox.warning(self, "Duplicate camera", "This main RTSP URL already exists.")
                 return
             self.cameras.append(camera)
             self._refresh_table()
@@ -160,7 +192,7 @@ class CameraSettingsDialog(QDialog):
         if editor.exec() == QDialog.DialogCode.Accepted:
             camera = editor.result_camera()
             if self._url_exists(camera.rtsp_url, exclude_id=camera.id):
-                QMessageBox.warning(self, "Duplicate camera", "This RTSP URL already exists.")
+                QMessageBox.warning(self, "Duplicate camera", "This main RTSP URL already exists.")
                 return
             self.cameras[row] = camera
             self._refresh_table()
