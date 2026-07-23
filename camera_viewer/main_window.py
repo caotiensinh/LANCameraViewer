@@ -17,6 +17,12 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .adaptive import (
+    AdaptiveDecision,
+    AdaptiveRealtimeController,
+    CameraTelemetry,
+    SystemMonitor,
+)
 from .camera_dialog import CameraSettingsDialog
 from .camera_tile import CameraTile, EmptyTile
 from .config_service import ConfigError, ConfigService
@@ -38,6 +44,9 @@ class MainWindow(QMainWindow):
         self.selected_camera_id: str | None = None
         self.focus_camera_id: str | None = None
         self._was_maximized = False
+        self._layout_prefers_grid = self.current_layout != "1x1"
+        self._adaptive_force_ids: set[str] = set()
+        self._adaptive_cache_by_id: dict[str, int] = {}
 
         self._chrome_hide_timer = QTimer(self)
         self._chrome_hide_timer.setSingleShot(True)
@@ -56,6 +65,12 @@ class MainWindow(QMainWindow):
         self.root_layout.setContentsMargins(0, 0, 0, 0)
         self.root_layout.setSpacing(0)
 
+        self.realtime_warning = QLabel(self.central)
+        self.realtime_warning.setObjectName("RealtimeWarning")
+        self.realtime_warning.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.realtime_warning.setFixedHeight(20)
+        self.realtime_warning.hide()
+
         self.header = self._build_header()
         self.grid_host = QWidget(self.central)
         self.grid_layout = QGridLayout(self.grid_host)
@@ -63,12 +78,44 @@ class MainWindow(QMainWindow):
         self.grid_layout.setHorizontalSpacing(0)
         self.grid_layout.setVerticalSpacing(0)
 
+        self.root_layout.addWidget(self.realtime_warning)
         self.root_layout.addWidget(self.header)
         self.root_layout.addWidget(self.grid_host, 1)
+
+        self._adaptive_timer = QTimer(self)
+        self._adaptive_timer.setInterval(self.config.settings.adaptive_sample_interval_ms)
+        self._adaptive_timer.timeout.connect(self._adaptive_tick)
+        self._system_monitor: SystemMonitor | None = None
+        self._adaptive_controller: AdaptiveRealtimeController | None = None
+        self._initialize_adaptive_realtime()
 
         self._rebuild_tiles()
         self._apply_layout(self.current_layout)
         self._show_header_temporarily()
+        if self._adaptive_controller is not None:
+            self._adaptive_timer.start()
+
+    def _initialize_adaptive_realtime(self) -> None:
+        if not self.config.settings.adaptive_realtime:
+            return
+        try:
+            self._system_monitor = SystemMonitor()
+            self._adaptive_controller = AdaptiveRealtimeController(
+                cpu_high_percent=self.config.settings.adaptive_cpu_high_percent,
+                cpu_critical_percent=self.config.settings.adaptive_cpu_critical_percent,
+                memory_high_percent=self.config.settings.adaptive_memory_high_percent,
+                min_switch_seconds=self.config.settings.adaptive_min_switch_seconds,
+                recovery_samples=self.config.settings.adaptive_recovery_samples,
+                bad_samples_before_switch=(
+                    self.config.settings.adaptive_bad_samples_before_switch
+                ),
+                cache_min_ms=self.config.settings.adaptive_cache_min_ms,
+                cache_max_ms=self.config.settings.adaptive_cache_max_ms,
+            )
+        except Exception:
+            LOGGER.exception("Adaptive realtime monitoring could not be initialized")
+            self._system_monitor = None
+            self._adaptive_controller = None
 
     def _build_header(self) -> QFrame:
         header = QFrame(self.central)
@@ -157,6 +204,7 @@ class MainWindow(QMainWindow):
             tile.double_clicked.connect(self._toggle_focus)
             tile.selected.connect(self._select_camera)
             tile.user_activity.connect(self._show_header_temporarily)
+            tile.player.metrics_ready.connect(self._on_camera_metrics)
             self.tiles[camera.id] = tile
 
         if enabled and self.selected_camera_id not in self.tiles:
@@ -191,6 +239,17 @@ class MainWindow(QMainWindow):
             self.grid_layout.setColumnStretch(column, 0)
             self.grid_layout.setColumnMinimumWidth(column, 0)
 
+    def _apply_stream_policy(self, tiles: list[CameraTile] | None = None) -> None:
+        target_tiles = tiles if tiles is not None else self._ordered_tiles()
+        base_cache = self.config.settings.network_caching_ms
+        for tile in target_tiles:
+            camera_id = tile.camera.id
+            use_grid = self._layout_prefers_grid or camera_id in self._adaptive_force_ids
+            tile.set_grid_stream(use_grid)
+            tile.player.set_runtime_cache(
+                self._adaptive_cache_by_id.get(camera_id, base_cache)
+            )
+
     def _apply_layout(self, layout_name: str) -> None:
         if layout_name not in LAYOUT_DIMENSIONS:
             return
@@ -199,6 +258,7 @@ class MainWindow(QMainWindow):
         self.layout_actions[layout_name].setChecked(True)
         rows, columns = LAYOUT_DIMENSIONS[layout_name]
         capacity = rows * columns
+        self._layout_prefers_grid = layout_name != "1x1"
 
         self._clear_grid()
         self._reset_grid_tracks()
@@ -212,9 +272,6 @@ class MainWindow(QMainWindow):
 
         visible_ids = {tile.camera.id for tile in visible_tiles}
 
-        # Stop tiles that are about to be hidden before changing their stream URL.
-        # This avoids briefly reconnecting every camera at main-stream quality when
-        # returning from a large grid to 1x1.
         for tile in ordered:
             should_stream = (
                 tile.camera.id in visible_ids or self.config.settings.keep_hidden_streams_alive
@@ -222,11 +279,7 @@ class MainWindow(QMainWindow):
             if not should_stream:
                 tile.set_stream_active(False)
 
-        # One camera uses the main stream. Multi-camera layouts use the optional
-        # low-resolution grid/substream to keep weak PCs smooth.
-        use_grid_stream = layout_name != "1x1"
-        for tile in ordered:
-            tile.set_grid_stream(use_grid_stream)
+        self._apply_stream_policy(ordered)
 
         for index in range(capacity):
             row, column = divmod(index, columns)
@@ -283,9 +336,16 @@ class MainWindow(QMainWindow):
         self.header.hide()
         self._clear_grid()
         self._reset_grid_tracks()
+        self._layout_prefers_grid = False
 
-        # Fullscreen always uses the main stream for maximum detail.
-        tile.set_grid_stream(False)
+        for camera_tile in self.tiles.values():
+            active = (
+                camera_tile.camera.id == camera_id
+                or self.config.settings.keep_hidden_streams_alive
+            )
+            camera_tile.set_stream_active(active)
+
+        self._apply_stream_policy([tile])
         self.grid_layout.addWidget(tile, 0, 0)
         self.grid_layout.setRowStretch(0, 1)
         self.grid_layout.setColumnStretch(0, 1)
@@ -293,10 +353,6 @@ class MainWindow(QMainWindow):
         tile.player.bind_video_output()
         self.grid_layout.invalidate()
         self.grid_host.updateGeometry()
-
-        for camera_tile in self.tiles.values():
-            active = camera_tile.camera.id == camera_id or self.config.settings.keep_hidden_streams_alive
-            camera_tile.set_stream_active(active)
 
         self.showFullScreen()
 
@@ -315,9 +371,62 @@ class MainWindow(QMainWindow):
     def _reconnect_visible(self) -> None:
         for tile in self.tiles.values():
             if tile.player.is_active:
-                tile.player.stop()
-                tile.player.set_active(False)
-                tile.player.set_active(True)
+                tile.player.restart()
+
+    def _on_camera_metrics(self, sample: CameraTelemetry) -> None:
+        if self._adaptive_controller is not None:
+            self._adaptive_controller.update_camera(sample)
+
+    def _adaptive_tick(self) -> None:
+        if self._adaptive_controller is None or self._system_monitor is None:
+            return
+
+        active_tiles = [tile for tile in self.tiles.values() if tile.player.is_active]
+        for tile in active_tiles:
+            tile.player.request_metrics()
+
+        try:
+            system = self._system_monitor.sample()
+            visible_ids = {tile.camera.id for tile in active_tiles}
+            decision = self._adaptive_controller.evaluate(
+                system=system,
+                visible_camera_ids=visible_ids,
+                base_cache_ms=self.config.settings.network_caching_ms,
+            )
+        except Exception:
+            LOGGER.exception("Adaptive realtime evaluation failed")
+            return
+
+        self._apply_adaptive_decision(decision)
+
+    def _apply_adaptive_decision(self, decision: AdaptiveDecision) -> None:
+        force_ids = set(decision.force_substream_ids)
+        cache_by_id = dict(decision.cache_ms_by_camera)
+        policy_changed = (
+            force_ids != self._adaptive_force_ids
+            or cache_by_id != self._adaptive_cache_by_id
+        )
+        self._adaptive_force_ids = force_ids
+        self._adaptive_cache_by_id = cache_by_id
+        if policy_changed:
+            self._apply_stream_policy()
+
+        if decision.level == "healthy" or not decision.warning:
+            self.realtime_warning.hide()
+            return
+
+        self.realtime_warning.setText(
+            f"REALTIME PROTECTION · {decision.warning}"
+        )
+        self.realtime_warning.setToolTip(
+            "The viewer is reducing stream quality or changing buffer settings "
+            "to stay close to live time."
+        )
+        self.realtime_warning.setProperty("level", decision.level)
+        self.realtime_warning.style().unpolish(self.realtime_warning)
+        self.realtime_warning.style().polish(self.realtime_warning)
+        self.realtime_warning.show()
+        self.realtime_warning.raise_()
 
     def _open_camera_settings(self) -> None:
         dialog = CameraSettingsDialog(self.config.cameras, self)
@@ -329,6 +438,8 @@ class MainWindow(QMainWindow):
         except ConfigError as exc:
             QMessageBox.critical(self, "Configuration error", str(exc))
             return
+        self._adaptive_force_ids.clear()
+        self._adaptive_cache_by_id.clear()
         self._rebuild_tiles()
         self._apply_layout(self.current_layout)
         self._show_header_temporarily()
@@ -348,6 +459,7 @@ class MainWindow(QMainWindow):
         super().keyPressEvent(event)
 
     def closeEvent(self, event: QCloseEvent) -> None:
+        self._adaptive_timer.stop()
         for tile in self.tiles.values():
             tile.close_player()
         try:
