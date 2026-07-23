@@ -69,6 +69,7 @@ class ViewerSettings:
     keep_hidden_streams_alive: bool = False
     stretch_video_to_tile: bool = True
     use_grid_substream: bool = True
+    decoder_threads_per_camera: int = 1
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> "ViewerSettings":
@@ -92,6 +93,9 @@ class ViewerSettings:
             keep_hidden_streams_alive=bool(raw.get("keep_hidden_streams_alive", False)),
             stretch_video_to_tile=bool(raw.get("stretch_video_to_tile", True)),
             use_grid_substream=bool(raw.get("use_grid_substream", True)),
+            decoder_threads_per_camera=max(
+                1, min(int(raw.get("decoder_threads_per_camera", 1)), 4)
+            ),
         )
 
     def to_dict(self) -> dict[str, Any]:
