@@ -7,6 +7,9 @@ A lightweight native Windows application for viewing RTSP IP cameras directly ov
 - Direct RTSP playback through LibVLC.
 - One isolated LibVLC instance, media player, and worker thread per camera.
 - A slow or reconnecting camera cannot block the playback commands of other cameras.
+- Adaptive realtime protection based on CPU, RAM, PC capacity, receive bandwidth and per-camera LibVLC statistics.
+- Automatic main/substream selection with hysteresis to prevent profile flapping.
+- A small warning above the title when the PC or stream cannot maintain stable realtime playback.
 - Layouts: `1x1`, `1x2`, `2x2`, `3x3`, and `4x4`.
 - Double-click a camera for fullscreen; double-click again or press `Esc` to return.
 - Minimal status indicator: green when playing, gray when connecting or offline.
@@ -60,12 +63,12 @@ RTSP URLs must use `rtsp://`, not `http://`.
 
 Open the camera settings dialog and configure:
 
-- **Main RTSP URL**: used in `1x1` and fullscreen.
-- **Grid/substream URL**: optional lower-resolution stream used in `1x2`, `2x2`, `3x3`, and `4x4`.
+- **Main RTSP URL**: preferred for `1x1` and fullscreen while resources are healthy.
+- **Grid/substream URL**: lower-resolution or lower-FPS profile used in multi-camera layouts and automatically forced when realtime protection detects pressure or instability.
 
-For a weak PC, configure the camera substream as H.264, about `640x360` or `704x576`, and `15-20 FPS`. The exact RTSP path depends on the camera model. Some cameras use `/stream2`, but this is only an example and must be verified for the actual camera.
+For a weak PC, configure the camera substream as H.264, about `640x360`, `704x576`, or `720p`, and `10-20 FPS`. The exact RTSP path depends on the camera model. Some cameras use `/stream2`, but this is only an example and must be verified for the actual camera.
 
-When Grid/substream URL is empty, the app falls back to the main stream.
+When Grid/substream URL is empty, the app falls back to the main stream and cannot automatically reduce resolution, bitrate, or FPS.
 
 Default camera configuration is stored in:
 
@@ -94,7 +97,7 @@ Both PCs must also have network access to the camera subnet. For the repository 
 
 ## Diagnostics
 
-After updating to version `0.1.4`, use:
+Use:
 
 ```text
 Start Menu > LAN Camera Viewer > Diagnose LAN Camera Viewer
@@ -124,7 +127,7 @@ This backs up the existing configuration first. The public sample URLs do not in
 
 ## Independent camera pipelines
 
-Version `0.1.3` isolates every camera into its own command worker and its own LibVLC instance. Network connect, stop, stream switching, and reconnect operations are serialized only inside that camera's worker; they are not placed in one global queue.
+Every camera has its own command worker and its own LibVLC instance. Network connect, stop, stream switching, metrics collection, and reconnect operations are serialized only inside that camera's worker; they are not placed in one global queue.
 
 The default fair decoder allocation is:
 
@@ -146,6 +149,31 @@ Expected examples:
 Camera 01: isolated LibVLC pipeline ready on rtsp-camera-01_0
 Camera 02: isolated LibVLC pipeline ready on rtsp-camera-02_0
 ```
+
+## Adaptive realtime protection
+
+Version `0.2.0` measures approximately every 1.5 seconds:
+
+- Windows CPU utilization;
+- total RAM utilization and application resident memory;
+- receive throughput and reported NIC link speed;
+- per-camera bytes received, displayed frames, lost frames, RTSP discontinuities, corrupted packets, and rebuffering events;
+- short-window variation in bitrate and displayed FPS as an estimated jitter signal.
+
+The controller adapts in this order:
+
+1. Preserve proximity to live time and discard frames that are already late.
+2. Stop hidden streams.
+3. Prefer configured substreams in multi-camera layouts.
+4. Force an unstable camera to its substream even in `1x1` or fullscreen.
+5. Adjust RTSP caching between the configured realtime limits.
+6. Display a small warning above the title if the stream or PC remains under pressure.
+
+The controller uses consecutive bad samples, a minimum switch interval, and a longer recovery window. A short CPU or network spike therefore does not continuously switch the camera between main and substream.
+
+The application does not transcode and cannot invent a lower-resolution or lower-FPS stream. Automatic quality reduction requires a valid Grid/substream URL supplied by the camera.
+
+Detailed design and settings: `docs/ADAPTIVE_REALTIME.md`.
 
 ## Manual development setup
 
@@ -193,10 +221,13 @@ Keep hidden streams disabled:
 "keep_hidden_streams_alive": false
 ```
 
-Keep grid substreams enabled:
+Keep grid substreams and adaptive realtime enabled:
 
 ```json
-"use_grid_substream": true
+{
+  "use_grid_substream": true,
+  "adaptive_realtime": true
+}
 ```
 
 If motion is still not smooth with four streams, check Windows Task Manager while viewing `2x2`:
