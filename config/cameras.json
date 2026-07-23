@@ -9,7 +9,8 @@
     "overlay_hide_ms": 2200,
     "keep_hidden_streams_alive": false,
     "stretch_video_to_tile": true,
-    "use_grid_substream": true
+    "use_grid_substream": true,
+    "decoder_threads_per_camera": 1
   },
   "cameras": [
     {
