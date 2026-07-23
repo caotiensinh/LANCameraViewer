@@ -159,15 +159,18 @@ Add-Check "64-bit VLC / libvlc.dll" ([bool]$vlcDir) ($(if ($vlcDir) { $vlcDir } 
 $venvPython = Join-Path $InstallDir ".venv\Scripts\python.exe"
 if (Test-Path $venvPython) {
     Add-Check "Python environment" $true $venvPython
+    Push-Location $InstallDir
     try {
-        $runtimeOutput = & $venvPython -c "import sys, PySide6, vlc; print(sys.version.split()[0]); print(PySide6.__version__); print(vlc.libvlc_get_version().decode(errors='replace'))" 2>&1
+        $runtimeOutput = & $venvPython -c "import sys, PySide6; from camera_viewer.vlc_runtime import load_vlc; v=load_vlc(); print(sys.version.split()[0]); print(PySide6.__version__); print(v.libvlc_get_version().decode(errors='replace'))" 2>&1
         if ($LASTEXITCODE -eq 0) {
-            Add-Check "Python/PySide6/python-vlc" $true (($runtimeOutput | ForEach-Object { [string]$_ }) -join " | ")
+            Add-Check "Python/PySide6/LibVLC" $true (($runtimeOutput | ForEach-Object { [string]$_ }) -join " | ")
         } else {
-            Add-Check "Python/PySide6/python-vlc" $false (($runtimeOutput | ForEach-Object { [string]$_ }) -join " | ")
+            Add-Check "Python/PySide6/LibVLC" $false (($runtimeOutput | ForEach-Object { [string]$_ }) -join " | ")
         }
     } catch {
-        Add-Check "Python/PySide6/python-vlc" $false $_.Exception.Message
+        Add-Check "Python/PySide6/LibVLC" $false $_.Exception.Message
+    } finally {
+        Pop-Location
     }
 } else {
     Add-Check "Python environment" $false "not found: $venvPython"
