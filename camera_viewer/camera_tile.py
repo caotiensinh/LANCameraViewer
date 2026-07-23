@@ -23,6 +23,7 @@ class CameraTile(QFrame):
         super().__init__(parent)
         self.camera = camera
         self.settings = settings
+        self._last_error = ""
         self.setObjectName("CameraTile")
         self.setProperty("focused", False)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
@@ -61,6 +62,7 @@ class CameraTile(QFrame):
 
         self.player = CameraPlayer(engine, camera, settings, self.video_surface, self)
         self.player.state_changed.connect(self._on_state_changed)
+        self.player.error_message.connect(self._on_error_message)
 
         self.overlay.hide()
 
@@ -130,17 +132,22 @@ class CameraTile(QFrame):
         if state == "online":
             color = "#43c768"
             tooltip = "Online"
+            self._last_error = ""
         elif state == "connecting":
             color = "#747a80"
             tooltip = "Connecting"
         else:
             color = "#747a80"
-            tooltip = "Offline"
+            tooltip = self._last_error or "Offline"
         self.status_dot.setStyleSheet(
             f"min-width:8px;max-width:8px;min-height:8px;max-height:8px;"
             f"border-radius:4px;background-color:{color};"
         )
         self.status_dot.setToolTip(tooltip)
+
+    def _on_error_message(self, message: str) -> None:
+        self._last_error = message.strip() or "RTSP connection failed"
+        self.status_dot.setToolTip(self._last_error)
 
 
 class EmptyTile(QFrame):
