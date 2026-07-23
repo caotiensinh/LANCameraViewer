@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+import logging
 import os
 import sys
 from pathlib import Path
 from types import ModuleType
+from typing import Any
+
+LOGGER = logging.getLogger(__name__)
+_DLL_DIRECTORY_HANDLES: list[Any] = []
 
 
 class VlcRuntimeError(RuntimeError):
@@ -31,7 +36,14 @@ def _candidate_vlc_directories() -> list[Path]:
     if local_app_data:
         candidates.append(Path(local_app_data) / "Programs" / "VideoLAN" / "VLC")
 
-    return candidates
+    unique: list[Path] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        normalized = str(candidate.resolve(strict=False)).lower()
+        if normalized not in seen:
+            seen.add(normalized)
+            unique.append(candidate)
+    return unique
 
 
 def prepare_vlc_environment() -> Path | None:
@@ -39,12 +51,24 @@ def prepare_vlc_environment() -> Path | None:
         return None
 
     for directory in _candidate_vlc_directories():
-        if (directory / "libvlc.dll").exists():
-            os.environ.setdefault("VLC_PLUGIN_PATH", str(directory / "plugins"))
+        dll_path = directory / "libvlc.dll"
+        plugin_path = directory / "plugins"
+        if dll_path.exists():
+            os.environ["VLC_PLUGIN_PATH"] = str(plugin_path)
             os.environ["PATH"] = f"{directory}{os.pathsep}{os.environ.get('PATH', '')}"
             if hasattr(os, "add_dll_directory"):
-                os.add_dll_directory(str(directory))
+                # Keep the returned handle alive. If it is garbage-collected,
+                # Windows closes the DLL search directory and later LibVLC/plugin
+                # loads can fail on machines where VLC was not already in PATH.
+                handle = os.add_dll_directory(str(directory))
+                _DLL_DIRECTORY_HANDLES.append(handle)
+                if plugin_path.exists():
+                    plugin_handle = os.add_dll_directory(str(plugin_path))
+                    _DLL_DIRECTORY_HANDLES.append(plugin_handle)
+            LOGGER.info("Using VLC runtime from %s", directory)
             return directory
+
+    LOGGER.error("No VLC runtime directory containing libvlc.dll was found")
     return None
 
 
@@ -54,11 +78,12 @@ def load_vlc() -> ModuleType:
         import vlc  # type: ignore
     except Exception as exc:  # pragma: no cover - depends on host installation
         raise VlcRuntimeError(
-            "python-vlc is not installed. Run install_and_run.bat first."
+            "python-vlc is not installed. Run the one-command installer again."
         ) from exc
 
     try:
-        vlc.libvlc_get_version()
+        version = vlc.libvlc_get_version()
+        LOGGER.info("Loaded LibVLC version %s", version.decode(errors="replace"))
     except Exception as exc:  # pragma: no cover - depends on Windows/VLC
         location = f" Detected VLC path: {detected_path}" if detected_path else ""
         raise VlcRuntimeError(
