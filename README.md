@@ -5,6 +5,8 @@ A lightweight native Windows application for viewing RTSP IP cameras directly ov
 ## Features
 
 - Direct RTSP playback through LibVLC.
+- One isolated LibVLC instance, media player, and worker thread per camera.
+- A slow or reconnecting camera cannot block the playback commands of other cameras.
 - Layouts: `1x1`, `1x2`, `2x2`, `3x3`, and `4x4`.
 - Double-click a camera for fullscreen; double-click again or press `Esc` to return.
 - Minimal status indicator: green when playing, gray when connecting or offline.
@@ -68,6 +70,31 @@ Default camera configuration is stored in:
 
 ```text
 config/cameras.json
+```
+
+## Independent camera pipelines
+
+Version `0.1.3` isolates every camera into its own command worker and its own LibVLC instance. Network connect, stop, stream switching, and reconnect operations are serialized only inside that camera's worker; they are not placed in one global queue.
+
+The default fair decoder allocation is:
+
+```json
+"decoder_threads_per_camera": 1
+```
+
+Valid values are `1` to `4`. Keep it at `1` on a weak four-camera PC. Increase it only when viewing a single high-resolution main stream that cannot decode fast enough and CPU headroom is available.
+
+The runtime log records a different worker name for every active camera:
+
+```text
+logs/camera-viewer.log
+```
+
+Expected examples:
+
+```text
+Camera 01: isolated LibVLC pipeline ready on rtsp-camera-01_0
+Camera 02: isolated LibVLC pipeline ready on rtsp-camera-02_0
 ```
 
 ## Manual development setup
