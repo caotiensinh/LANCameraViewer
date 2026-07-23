@@ -35,7 +35,7 @@ class CameraEditorDialog(QDialog):
         self.url_edit.setPlaceholderText("rtsp://user:password@192.168.11.124:554/stream1")
         self.grid_url_edit = QLineEdit(camera.grid_rtsp_url if camera else "")
         self.grid_url_edit.setPlaceholderText(
-            "Optional low-resolution stream for grids, for example .../stream2"
+            "Optional low-resolution stream for realtime protection, for example .../stream2"
         )
         self.enabled_check = QCheckBox("Enabled")
         self.enabled_check.setChecked(camera.enabled if camera else True)
@@ -47,8 +47,9 @@ class CameraEditorDialog(QDialog):
         form.addRow("", self.enabled_check)
 
         hint = QLabel(
-            "The main stream is used for 1x1 and fullscreen. The optional grid stream "
-            "is used for 1x2, 2x2, 3x3 and 4x4 to reduce CPU/GPU load."
+            "The main stream is preferred for 1x1 and fullscreen. The optional grid "
+            "stream is used in multi-camera layouts and may be selected automatically "
+            "when realtime protection detects CPU, RAM, bandwidth, jitter, or frame-loss pressure."
         )
         hint.setWordWrap(True)
 
@@ -141,8 +142,10 @@ class CameraSettingsDialog(QDialog):
         action_layout.addStretch(1)
 
         hint = QLabel(
-            "For a weak PC, configure each camera's low-resolution H.264 substream "
-            "as the Grid stream. Configuration is stored in config/cameras.json."
+            "Configure a low-bandwidth H.264 Grid/substream for every camera. Adaptive "
+            "realtime mode can then lower resolution, FPS, and bitrate by switching "
+            "profiles instead of allowing playback latency to build up. Configuration "
+            "is stored in config/cameras.json."
         )
         hint.setWordWrap(True)
         hint.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
