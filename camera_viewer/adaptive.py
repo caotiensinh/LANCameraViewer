@@ -184,12 +184,39 @@ class AdaptiveRealtimeController:
             if system.nic_speed_mbps > 0
             else 0.0
         )
+        weak_hardware = (
+            system.logical_cpus <= 4
+            or system.total_memory_gb <= 8.5
+        )
+        cpu_high_threshold = (
+            min(self.cpu_high_percent, 72)
+            if weak_hardware
+            else self.cpu_high_percent
+        )
+        cpu_critical_threshold = (
+            min(self.cpu_critical_percent, 88)
+            if weak_hardware
+            else self.cpu_critical_percent
+        )
+        memory_high_threshold = (
+            min(self.memory_high_percent, 82)
+            if weak_hardware
+            else self.memory_high_percent
+        )
+        process_memory_limit_mb = max(
+            1024.0,
+            system.total_memory_gb * 1024.0 * 0.30,
+        )
+        process_memory_pressure = (
+            system.process_memory_mb >= process_memory_limit_mb
+        )
         resource_pressure = (
-            system.cpu_percent >= self.cpu_high_percent
-            or system.memory_percent >= self.memory_high_percent
+            system.cpu_percent >= cpu_high_threshold
+            or system.memory_percent >= memory_high_threshold
+            or process_memory_pressure
             or network_utilization >= 0.72
         )
-        critical_pressure = system.cpu_percent >= self.cpu_critical_percent
+        critical_pressure = system.cpu_percent >= cpu_critical_threshold
 
         if resource_pressure:
             self._global_bad_streak += 1
@@ -197,6 +224,14 @@ class AdaptiveRealtimeController:
         else:
             self._global_bad_streak = 0
             self._global_good_streak += 1
+
+        # Critical CPU pressure is acted on immediately. Normal pressure still
+        # requires consecutive samples so short spikes cannot cause flapping.
+        if critical_pressure:
+            self._global_bad_streak = max(
+                self._global_bad_streak,
+                self.bad_samples_before_switch,
+            )
 
         if self._global_bad_streak >= self.bad_samples_before_switch:
             self._global_pressure = True
@@ -269,16 +304,18 @@ class AdaptiveRealtimeController:
 
         if critical_pressure:
             level = "critical"
-        elif self._global_pressure or unhealthy_ids:
+        elif self._global_pressure or unhealthy_ids or self._forced_ids:
             level = "warning"
         else:
             level = "healthy"
 
         warning_parts: list[str] = []
-        if system.cpu_percent >= self.cpu_high_percent:
+        if system.cpu_percent >= cpu_high_threshold:
             warning_parts.append(f"CPU {system.cpu_percent:.0f}%")
-        if system.memory_percent >= self.memory_high_percent:
+        if system.memory_percent >= memory_high_threshold:
             warning_parts.append(f"RAM {system.memory_percent:.0f}%")
+        if process_memory_pressure:
+            warning_parts.append(f"app RAM {system.process_memory_mb:.0f} MB")
         if network_utilization >= 0.72:
             warning_parts.append(
                 f"LAN receive {system.network_rx_mbps:.1f}/"
