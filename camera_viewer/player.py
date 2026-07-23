@@ -5,11 +5,13 @@ import sys
 import threading
 from concurrent.futures import Future, ThreadPoolExecutor
 from math import gcd
+from time import monotonic
 from typing import Any
 
 from PySide6.QtCore import QObject, QTimer, Signal
 from PySide6.QtWidgets import QWidget
 
+from .adaptive import CameraTelemetry
 from .models import CameraConfig, ViewerSettings
 from .vlc_runtime import load_vlc
 
@@ -41,10 +43,11 @@ class VlcEngine:
 
 
 class CameraPlayer(QObject):
-    """Independent RTSP pipeline with its own LibVLC instance and worker thread."""
+    """Independent RTSP pipeline with adaptive telemetry and its own worker."""
 
     state_changed = Signal(str)
     error_message = Signal(str)
+    metrics_ready = Signal(object)
     _state_event = Signal(str)
     _failure_event = Signal(str)
     _worker_done = Signal(object)
@@ -65,6 +68,7 @@ class CameraPlayer(QObject):
 
         self.vlc_instance: Any | None = None
         self.media_player: Any | None = None
+        self._media: Any | None = None
 
         self._active = False
         self._closing = False
@@ -77,8 +81,21 @@ class CameraPlayer(QObject):
         self._aspect_ratio: str | None = None
         self._playing = False
         self._applied_url = ""
+        self._runtime_cache_ms = self.settings.network_caching_ms
+        self._applied_cache_ms = -1
         self._restart_serial = 0
         self._applied_restart_serial = -1
+        self._metrics_serial = 0
+        self._applied_metrics_serial = -1
+
+        self._last_stats_at = monotonic()
+        self._last_read_bytes = 0
+        self._last_displayed = 0
+        self._last_lost = 0
+        self._last_discontinuities = 0
+        self._last_corrupted = 0
+        self._buffering_events_total = 0
+        self._last_buffering_events = 0
 
         self._command_lock = threading.Lock()
         self._command_generation = 0
@@ -103,6 +120,10 @@ class CameraPlayer(QObject):
     @property
     def stream_url(self) -> str:
         return self._stream_url
+
+    @property
+    def uses_grid_stream(self) -> bool:
+        return self._use_grid_stream and bool(self.camera.grid_rtsp_url)
 
     def bind_video_output(self) -> None:
         window_id = int(self.video_widget.winId())
@@ -146,6 +167,27 @@ class CameraPlayer(QObject):
         )
         self._schedule_reconcile()
 
+    def set_runtime_cache(self, cache_ms: int) -> None:
+        cache_ms = max(
+            self.settings.adaptive_cache_min_ms,
+            min(int(cache_ms), self.settings.adaptive_cache_max_ms),
+        )
+        with self._command_lock:
+            if self._runtime_cache_ms == cache_ms:
+                return
+            self._runtime_cache_ms = cache_ms
+            self._command_generation += 1
+        LOGGER.info("%s: runtime RTSP cache set to %d ms", self.camera.name, cache_ms)
+        self._schedule_reconcile()
+
+    def request_metrics(self) -> None:
+        if self._closing or not self._active:
+            return
+        with self._command_lock:
+            self._metrics_serial += 1
+            self._command_generation += 1
+        self._schedule_reconcile()
+
     def set_active(self, active: bool) -> None:
         if self._closing or not self.camera.enabled:
             active = False
@@ -162,7 +204,7 @@ class CameraPlayer(QObject):
         self.set_active(True)
 
     def stop(self) -> None:
-        self.restart()
+        self.set_active(False)
 
     def restart(self) -> None:
         if self._closing or not self._active:
@@ -219,7 +261,9 @@ class CameraPlayer(QObject):
         if needs_more_work:
             self._schedule_reconcile()
 
-    def _snapshot_command(self) -> tuple[int, bool, bool, str, int | None, str | None, int]:
+    def _snapshot_command(
+        self,
+    ) -> tuple[int, bool, bool, str, int | None, str | None, int, int, int]:
         with self._command_lock:
             return (
                 self._command_generation,
@@ -229,6 +273,8 @@ class CameraPlayer(QObject):
                 self._window_id,
                 self._aspect_ratio,
                 self._restart_serial,
+                self._runtime_cache_ms,
+                self._metrics_serial,
             )
 
     def _mark_applied(self, generation: int) -> bool:
@@ -246,6 +292,8 @@ class CameraPlayer(QObject):
                 window_id,
                 aspect_ratio,
                 restart_serial,
+                cache_ms,
+                metrics_serial,
             ) = self._snapshot_command()
 
             try:
@@ -261,12 +309,16 @@ class CameraPlayer(QObject):
                         not self._playing
                         or self._applied_url != desired_url
                         or self._applied_restart_serial != restart_serial
+                        or self._applied_cache_ms != cache_ms
                     )
                     if needs_restart:
                         if self._playing:
                             self._stop_blocking()
-                        self._start_blocking(desired_url)
+                        self._start_blocking(desired_url, cache_ms)
                         self._applied_restart_serial = restart_serial
+                    if metrics_serial != self._applied_metrics_serial:
+                        self._collect_metrics_blocking()
+                        self._applied_metrics_serial = metrics_serial
                 elif self._playing:
                     self._stop_blocking()
             except Exception as exc:
@@ -324,19 +376,21 @@ class CameraPlayer(QObject):
                 self.media_player.set_nsobject(window_id)
         self.media_player.video_set_aspect_ratio(aspect_ratio)
 
-    def _start_blocking(self, stream_url: str) -> None:
+    def _start_blocking(self, stream_url: str, cache_ms: int) -> None:
         if not stream_url or self.media_player is None or self.vlc_instance is None:
             return
         self._state_event.emit("connecting")
         media = self.vlc_instance.media_new(stream_url)
         media.add_option(":no-audio")
-        media.add_option(f":network-caching={self.settings.network_caching_ms}")
-        media.add_option(f":live-caching={self.settings.network_caching_ms}")
-        media.add_option(f":rtsp-caching={self.settings.network_caching_ms}")
+        media.add_option(f":network-caching={cache_ms}")
+        media.add_option(f":live-caching={cache_ms}")
+        media.add_option(f":rtsp-caching={cache_ms}")
         if self.settings.rtsp_transport == "tcp":
             media.add_option(":rtsp-tcp")
         self.media_player.set_media(media)
-        media.release()
+        if self._media is not None:
+            self._media.release()
+        self._media = media
         result = self.media_player.play()
         if result == -1:
             self._playing = False
@@ -344,6 +398,78 @@ class CameraPlayer(QObject):
             raise RuntimeError("LibVLC rejected the RTSP stream")
         self._playing = True
         self._applied_url = stream_url
+        self._applied_cache_ms = cache_ms
+        self._reset_stats_baseline()
+
+    def _reset_stats_baseline(self) -> None:
+        self._last_stats_at = monotonic()
+        self._last_read_bytes = 0
+        self._last_displayed = 0
+        self._last_lost = 0
+        self._last_discontinuities = 0
+        self._last_corrupted = 0
+        with self._command_lock:
+            self._last_buffering_events = self._buffering_events_total
+
+    def _collect_metrics_blocking(self) -> None:
+        now = monotonic()
+        elapsed = max(0.2, now - self._last_stats_at)
+        read_bytes = 0
+        displayed = 0
+        lost = 0
+        discontinuities = 0
+        corrupted = 0
+
+        if self._media is not None:
+            stats = self.engine_factory.vlc.MediaStats()
+            try:
+                available = bool(self._media.get_stats(stats))
+            except Exception:
+                available = False
+            if available:
+                read_bytes = int(getattr(stats, "read_bytes", 0) or 0)
+                displayed = int(getattr(stats, "displayed_pictures", 0) or 0)
+                lost = int(getattr(stats, "lost_pictures", 0) or 0)
+                discontinuities = int(getattr(stats, "demux_discontinuity", 0) or 0)
+                corrupted = int(getattr(stats, "demux_corrupted", 0) or 0)
+
+        delta_read = max(0, read_bytes - self._last_read_bytes)
+        delta_displayed = max(0, displayed - self._last_displayed)
+        delta_lost = max(0, lost - self._last_lost)
+        delta_discontinuities = max(0, discontinuities - self._last_discontinuities)
+        delta_corrupted = max(0, corrupted - self._last_corrupted)
+        with self._command_lock:
+            buffering_total = self._buffering_events_total
+        delta_buffering = max(0, buffering_total - self._last_buffering_events)
+
+        total_pictures = delta_displayed + delta_lost
+        loss_ratio = delta_lost / total_pictures if total_pictures > 0 else 0.0
+        input_mbps = delta_read * 8.0 / elapsed / 1_000_000.0
+        displayed_fps = delta_displayed / elapsed
+
+        sample = CameraTelemetry(
+            camera_id=self.camera.id,
+            camera_name=self.camera.name,
+            state=self._last_state,
+            stream_kind="grid" if self.uses_grid_stream else "main",
+            has_substream=bool(self.camera.grid_rtsp_url),
+            input_mbps=input_mbps,
+            displayed_fps=displayed_fps,
+            loss_ratio=loss_ratio,
+            discontinuities=delta_discontinuities,
+            corrupted_packets=delta_corrupted,
+            buffering_events=delta_buffering,
+            sampled_at=now,
+        )
+        self.metrics_ready.emit(sample)
+
+        self._last_stats_at = now
+        self._last_read_bytes = read_bytes
+        self._last_displayed = displayed
+        self._last_lost = lost
+        self._last_discontinuities = discontinuities
+        self._last_corrupted = corrupted
+        self._last_buffering_events = buffering_total
 
     def _stop_blocking(self) -> None:
         if self.media_player is None:
@@ -355,6 +481,10 @@ class CameraPlayer(QObject):
         finally:
             self._playing = False
             self._applied_url = ""
+            self._applied_cache_ms = -1
+            if self._media is not None:
+                self._media.release()
+                self._media = None
             if not self._closing:
                 self._state_event.emit("offline")
 
@@ -364,6 +494,9 @@ class CameraPlayer(QObject):
         try:
             if self._playing:
                 self._stop_blocking()
+            elif self._media is not None:
+                self._media.release()
+                self._media = None
             if self.media_player is not None:
                 self.media_player.release()
                 self.media_player = None
@@ -377,8 +510,18 @@ class CameraPlayer(QObject):
         if not self._closing:
             self._state_event.emit("connecting")
 
-    def _on_buffering(self, _event: Any) -> None:
-        if not self._closing and self._last_state != "online":
+    def _on_buffering(self, event: Any) -> None:
+        if self._closing:
+            return
+        new_cache = 0.0
+        try:
+            new_cache = float(event.u.media_player_buffering.new_cache)
+        except Exception:
+            pass
+        if self._last_state == "online" and new_cache < 100.0:
+            with self._command_lock:
+                self._buffering_events_total += 1
+        if self._last_state != "online":
             self._state_event.emit("connecting")
 
     def _on_playing(self, _event: Any) -> None:
