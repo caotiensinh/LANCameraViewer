@@ -180,7 +180,15 @@ class AdaptiveRealtimeController:
         )
         fps_history = self._fps_history[sample.camera_id]
         fps_jitter = self._coefficient_of_variation(fps_history)
-        if bitrate_jitter >= 0.45 or fps_jitter >= 0.35:
+        transport_evidence = (
+            sample.buffering_events > 0
+            or sample.loss_ratio >= 0.01
+            or sample.discontinuities > 0
+            or sample.corrupted_packets > 0
+        )
+        # A VBR camera naturally changes bitrate when the scene changes. Treat
+        # bitrate variation as jitter only when transport/decode symptoms agree.
+        if fps_jitter >= 0.35 or (bitrate_jitter >= 0.60 and transport_evidence):
             reasons.append("estimated jitter")
 
         recent_fps = [value for value in fps_history if value > 0]
