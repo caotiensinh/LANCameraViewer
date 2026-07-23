@@ -103,13 +103,14 @@ def _patch_player(player_module: Any) -> None:
         if not stream_url or self.media_player is None or self.vlc_instance is None:
             return
 
-        cache_ms = stable_cache_ms(cache_ms)
+        requested_cache_ms = int(cache_ms)
+        effective_cache_ms = stable_cache_ms(requested_cache_ms)
         self._state_event.emit("connecting")
         media = self.vlc_instance.media_new(stream_url)
         media.add_option(":no-audio")
-        media.add_option(f":network-caching={cache_ms}")
-        media.add_option(f":live-caching={cache_ms}")
-        media.add_option(f":rtsp-caching={cache_ms}")
+        media.add_option(f":network-caching={effective_cache_ms}")
+        media.add_option(f":live-caching={effective_cache_ms}")
+        media.add_option(f":rtsp-caching={effective_cache_ms}")
         if self.settings.rtsp_transport == "tcp":
             media.add_option(":rtsp-tcp")
 
@@ -126,7 +127,9 @@ def _patch_player(player_module: Any) -> None:
 
         self._playing = True
         self._applied_url = stream_url
-        self._applied_cache_ms = cache_ms
+        # Store the requested value because the command reconciler compares against
+        # _runtime_cache_ms. The effective VLC value is separately bounded above.
+        self._applied_cache_ms = requested_cache_ms
         self._reset_stats_baseline()
 
     def release_blocking(self: Any) -> None:
