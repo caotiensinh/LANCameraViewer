@@ -5,6 +5,20 @@ QMainWindow, QWidget {
     font-family: "Segoe UI";
     font-size: 12px;
 }
+QLabel#RealtimeWarning {
+    min-height: 20px;
+    max-height: 20px;
+    padding: 0 10px;
+    background-color: #5a4612;
+    color: #fff0b3;
+    border: none;
+    font-size: 11px;
+    font-weight: 600;
+}
+QLabel#RealtimeWarning[level="critical"] {
+    background-color: #682a2a;
+    color: #ffd6d6;
+}
 QFrame#HeaderBar {
     background-color: #171a1d;
     border-bottom: 1px solid #292d31;
