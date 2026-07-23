@@ -275,9 +275,14 @@ class MainWindow(QMainWindow):
         self._chrome_hide_timer.stop()
         self.header.hide()
         self._clear_grid()
+        self._reset_grid_tracks()
         self.grid_layout.addWidget(tile, 0, 0)
+        self.grid_layout.setRowStretch(0, 1)
+        self.grid_layout.setColumnStretch(0, 1)
         tile.show()
         tile.player.bind_video_output()
+        self.grid_layout.invalidate()
+        self.grid_host.updateGeometry()
 
         for camera_tile in self.tiles.values():
             active = camera_tile.camera.id == camera_id or self.config.settings.keep_hidden_streams_alive
