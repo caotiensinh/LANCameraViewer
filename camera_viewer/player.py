@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import sys
+from math import gcd
 from typing import Any
 
 from PySide6.QtCore import QObject, QTimer, Signal
@@ -85,6 +86,19 @@ class CameraPlayer(QObject):
             self.media_player.set_xwindow(win_id)
         elif sys.platform == "darwin":
             self.media_player.set_nsobject(win_id)
+        self.update_video_geometry()
+
+    def update_video_geometry(self) -> None:
+        if not self.settings.stretch_video_to_tile:
+            self.media_player.video_set_aspect_ratio(None)
+            return
+
+        width = max(1, self.video_widget.width())
+        height = max(1, self.video_widget.height())
+        divisor = gcd(width, height)
+        self.media_player.video_set_aspect_ratio(
+            f"{width // divisor}:{height // divisor}"
+        )
 
     def set_active(self, active: bool) -> None:
         if self._closing or not self.camera.enabled:
