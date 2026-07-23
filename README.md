@@ -10,10 +10,12 @@ A lightweight native Windows application for viewing RTSP IP cameras directly ov
 - Minimal status indicator: green when playing, gray when connecting or offline.
 - Camera names and controls appear only while the mouse is moving, then automatically hide.
 - Add, edit, enable, disable, and delete cameras from the settings dialog.
+- Separate optional grid/substream URL for weak PCs.
 - External JSON configuration at `config/cameras.json`.
 - RTSP over TCP by default, audio disabled, hardware decoding enabled automatically.
 - Automatic reconnect after network or camera interruptions.
-- Hidden streams are stopped by default to reduce CPU and GPU load on weak PCs.
+- Hidden streams are stopped by default to reduce CPU and GPU load.
+- Decoder frame skipping is disabled for smoother motion; only frames that are already late may be discarded to stay close to live time.
 
 ## One-command Windows installation
 
@@ -37,7 +39,7 @@ Windows 10/11 with Microsoft **App Installer** (`winget`) is required for fully 
 
 ## Camera configuration
 
-Example URL:
+Main-stream example:
 
 ```text
 rtsp://192.168.11.124:554/stream1
@@ -50,6 +52,17 @@ rtsp://username:password@192.168.11.124:554/stream1
 ```
 
 RTSP URLs must use `rtsp://`, not `http://`.
+
+### Main stream and grid stream
+
+Open the camera settings dialog and configure:
+
+- **Main RTSP URL**: used in `1x1` and fullscreen.
+- **Grid/substream URL**: optional lower-resolution stream used in `1x2`, `2x2`, `3x3`, and `4x4`.
+
+For a weak PC, configure the camera substream as H.264, about `640x360` or `704x576`, and `15-20 FPS`. The exact RTSP path depends on the camera model. Some cameras use `/stream2`, but this is only an example and must be verified for the actual camera.
+
+When Grid/substream URL is empty, the app falls back to the main stream.
 
 Default camera configuration is stored in:
 
@@ -97,13 +110,24 @@ The build bundles LibVLC and its plugins. PyInstaller must run on Windows to pro
 
 ## Performance recommendations
 
-For weak PCs, keep this setting disabled:
+Keep hidden streams disabled:
 
 ```json
 "keep_hidden_streams_alive": false
 ```
 
-Use each camera's low-resolution substream in multi-camera layouts when available. Switching the implementation from Python to Rust does not remove the main cost, which is decoding multiple video streams.
+Keep grid substreams enabled:
+
+```json
+"use_grid_substream": true
+```
+
+If motion is still not smooth with four streams, check Windows Task Manager while viewing `2x2`:
+
+- CPU near 90-100% usually means the streams are being software-decoded or are too large.
+- GPU Video Decode near 0% may mean the camera codec/profile is unsupported by the PC hardware.
+- H.265 on an older PC can be much heavier than H.264.
+- Four main streams at 1080p/25-30 FPS may exceed the capability of a weak PC regardless of whether the UI is written in Python or Rust.
 
 ## License
 
