@@ -20,10 +20,15 @@ class VlcEngine:
         args = [
             "--no-video-title-show",
             "--no-osd",
+            "--no-spu",
             "--no-audio",
             "--avcodec-hw=any",
+            # Do not skip frames during decoding. Skipping frames makes motion
+            # visibly jumpy even when the network is healthy.
+            "--no-skip-frames",
+            # If the PC genuinely falls behind, discard only frames that are
+            # already late so the viewer can catch up to live time.
             "--drop-late-frames",
-            "--skip-frames",
             "--quiet",
         ]
         self.instance = self.vlc.Instance(*args)
@@ -56,6 +61,8 @@ class CameraPlayer(QObject):
         self._active = False
         self._closing = False
         self._last_state = "offline"
+        self._use_grid_stream = False
+        self._stream_url = self.camera.stream_url(False)
 
         self._reconnect_timer = QTimer(self)
         self._reconnect_timer.setSingleShot(True)
@@ -68,6 +75,10 @@ class CameraPlayer(QObject):
     @property
     def is_active(self) -> bool:
         return self._active
+
+    @property
+    def stream_url(self) -> str:
+        return self._stream_url
 
     def _attach_events(self) -> None:
         manager = self.media_player.event_manager()
@@ -100,6 +111,28 @@ class CameraPlayer(QObject):
             f"{width // divisor}:{height // divisor}"
         )
 
+    def set_grid_stream(self, use_grid_stream: bool) -> None:
+        use_grid_stream = bool(use_grid_stream and self.settings.use_grid_substream)
+        target_url = self.camera.stream_url(use_grid_stream)
+        if target_url == self._stream_url:
+            self._use_grid_stream = use_grid_stream
+            return
+
+        self._use_grid_stream = use_grid_stream
+        self._stream_url = target_url
+        LOGGER.info(
+            "%s: switching to %s stream",
+            self.camera.name,
+            "grid/sub" if use_grid_stream and self.camera.grid_rtsp_url else "main",
+        )
+        if self._active:
+            self._reconnect_timer.stop()
+            try:
+                self.media_player.stop()
+            except Exception:
+                LOGGER.exception("Failed to switch stream for camera %s", self.camera.name)
+            self.start()
+
     def set_active(self, active: bool) -> None:
         if self._closing or not self.camera.enabled:
             active = False
@@ -115,17 +148,18 @@ class CameraPlayer(QObject):
             self.stop()
 
     def start(self) -> None:
-        if self._closing or not self._active or not self.camera.rtsp_url:
+        if self._closing or not self._active or not self._stream_url:
             return
 
         self._reconnect_timer.stop()
         self.bind_video_output()
         self._set_state("connecting")
 
-        media = self.engine.instance.media_new(self.camera.rtsp_url)
+        media = self.engine.instance.media_new(self._stream_url)
         media.add_option(":no-audio")
         media.add_option(f":network-caching={self.settings.network_caching_ms}")
         media.add_option(f":live-caching={self.settings.network_caching_ms}")
+        media.add_option(f":rtsp-caching={self.settings.network_caching_ms}")
         if self.settings.rtsp_transport == "tcp":
             media.add_option(":rtsp-tcp")
 
