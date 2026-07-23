@@ -210,13 +210,24 @@ class MainWindow(QMainWindow):
         else:
             visible_tiles = ordered[:capacity]
 
+        visible_ids = {tile.camera.id for tile in visible_tiles}
+
+        # Stop tiles that are about to be hidden before changing their stream URL.
+        # This avoids briefly reconnecting every camera at main-stream quality when
+        # returning from a large grid to 1x1.
+        for tile in ordered:
+            should_stream = (
+                tile.camera.id in visible_ids or self.config.settings.keep_hidden_streams_alive
+            )
+            if not should_stream:
+                tile.set_stream_active(False)
+
         # One camera uses the main stream. Multi-camera layouts use the optional
         # low-resolution grid/substream to keep weak PCs smooth.
         use_grid_stream = layout_name != "1x1"
         for tile in ordered:
             tile.set_grid_stream(use_grid_stream)
 
-        visible_ids = {tile.camera.id for tile in visible_tiles}
         for index in range(capacity):
             row, column = divmod(index, columns)
             if index < len(visible_tiles):
@@ -235,7 +246,8 @@ class MainWindow(QMainWindow):
             should_stream = (
                 tile.camera.id in visible_ids or self.config.settings.keep_hidden_streams_alive
             )
-            tile.set_stream_active(should_stream)
+            if should_stream:
+                tile.set_stream_active(True)
             tile.set_selected(tile.camera.id == self.selected_camera_id)
 
         for row in range(rows):
